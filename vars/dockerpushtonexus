@@ -1,0 +1,22 @@
+// vars/dockerPush.groovy
+def call(Map config) {
+    /*
+     * Pushes a Docker image to a registry.
+     *
+     * Parameters:
+     *   imageName  (required) - Full image name including registry (e.g. nexus.local:7000/backend)
+     *   tag        (optional) - Image tag (default: "latest")
+     */
+
+    if (!config.imageName) {
+        error "dockerPush: Missing required parameter 'imageName'"
+    }
+
+    def imageName = config.imageName
+    def tag = config.get('tag', 'latest')
+
+    sh """
+    echo "Pushing image: ${imageName}:${tag}"
+    docker push ${imageName}:${tag}
+    """
+}
