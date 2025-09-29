@@ -14,7 +14,7 @@ def call(Map args = [:]) {
             echo "Scanning container for: ${svc}"
             echo "==============================="
 
-            // שלב 1 - בודקים קריטיות
+            // שלב 1 - בדיקת קריטיות
             def criticalExitCode = sh(
                 script: "snyk container test ${svc} --severity-threshold=critical",
                 returnStatus: true
@@ -22,10 +22,11 @@ def call(Map args = [:]) {
 
             if (criticalExitCode != 0) {
                 echo "Found CRITICAL vulnerabilities in ${svc} - failing pipeline."
-                error("Stopping pipeline due to critical vulnerabilities in ${svc}") // זה יגרום ל-stage להיות אדום
+                currentBuild.result = 'FAILURE'
+                error("Stopping pipeline due to critical vulnerabilities in ${svc}")
             }
 
-            // שלב 2 - בודקים High
+            // שלב 2 - בדיקת High
             def highExitCode = sh(
                 script: "snyk container test ${svc} --severity-threshold=high",
                 returnStatus: true
@@ -42,10 +43,9 @@ def call(Map args = [:]) {
             sh "snyk container monitor ${svc} || true"
         }
 
-        // אם לפחות שירות אחד עם High -> מחזיר exit 1 כדי ש-Jenkins יתפוס כ-UNSTABLE
         if (foundHigh) {
-            echo "Marking stage as UNSTABLE because at least one service had HIGH vulnerabilities."
-            sh "exit 1"  // מחזיר קוד יציאה ≠ 0
+            echo "Marking build as UNSTABLE because at least one service had HIGH vulnerabilities."
+            currentBuild.result = 'UNSTABLE'
         } else {
             echo "All services scanned clean (no critical/high vulnerabilities)."
         }
