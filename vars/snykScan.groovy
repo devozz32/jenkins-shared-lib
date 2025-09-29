@@ -5,51 +5,55 @@ def call(Map args = [:]) {
     }
 
     withCredentials([string(credentialsId: 'SNYK_TOKEN', variable: 'SNYK_TOKEN')]) {
-        sh """
-        set -e
-        snyk auth \$SNYK_TOKEN
-        EXIT_CODE=0
+        for (svc in services) {
+            sh """
+            set -e
+            snyk auth \$SNYK_TOKEN
 
-        for svc in ${services.join(' ')}; do
-            SAFE_NAME=\$(echo \$svc | sed 's#[/:]#_#g')
+            SAFE_NAME=\$(echo ${svc} | sed 's#[/:]#_#g')
             echo "==============================="
-            echo "Scanning container for: \$svc"
+            echo "Scanning container for: ${svc}"
             echo "==============================="
 
-            # שמירה של התוצאה ל-JSON (גם אם יש שגיאה ממשיכים)
-            snyk container test \$svc --json > \${SAFE_NAME}-snyk.json || true
+            snyk container test ${svc} --json > \${SAFE_NAME}-snyk.json || true
 
             if [ ! -s \${SAFE_NAME}-snyk.json ]; then
-                echo "No results produced by Snyk for \$svc - skipping"
-                EXIT_CODE=1
-                continue
+                echo "No results produced by Snyk for ${svc} - skipping"
+                exit 1
             fi
 
-            # ספירת פגיעויות בצורה בטוחה (אם אין vulnerabilities נקבל 0)
             CRITICAL=\$(jq '[.vulnerabilities[]? | select(.severity=="critical")] | length' \${SAFE_NAME}-snyk.json)
             HIGH=\$(jq '[.vulnerabilities[]? | select(.severity=="high")] | length' \${SAFE_NAME}-snyk.json)
             MED=\$(jq '[.vulnerabilities[]? | select(.severity=="medium")] | length' \${SAFE_NAME}-snyk.json)
 
-            echo "Results for \$svc:"
+            echo "Results for ${svc}:"
             echo "  Critical: \$CRITICAL"
             echo "  High:     \$HIGH"
             echo "  Medium:   \$MED"
 
-            # שולח את התוצאה ל-Snyk UI לחשבון שלך
-            snyk container monitor \$svc || true
+            snyk container monitor ${svc} || true
 
-            if [ "\$CRITICAL" -gt 0 ] || [ "\$HIGH" -gt 0 ]; then
-                echo "Remark: Found \$CRITICAL critical and \$HIGH high vulnerabilities. Failing pipeline."
-                EXIT_CODE=1
-            elif [ "\$MED" -gt 0 ]; then
-                echo "Remark: Found \$MED medium vulnerabilities. Review recommended."
-            else
-                echo "Remark: No significant vulnerabilities found."
+            if [ "\$CRITICAL" -gt 0 ]; then
+                echo "Found \$CRITICAL critical vulnerabilities. Failing pipeline."
+                exit 2
+            elif [ "\$HIGH" -gt 0 ]; then
+                echo "Found \$HIGH high vulnerabilities. Marking as UNSTABLE."
+                exit 1
             fi
-            echo ""
-        done
 
-        exit \$EXIT_CODE
-        """
+            echo "No significant vulnerabilities found for ${svc}."
+            """
+            
+            // קוד היציאה מהפקודה למטה יגיד לג'נקינס אם זה אדום או צהוב
+            script {
+                def lastCode = sh(script: "echo \$?", returnStdout: true).trim()
+                if (lastCode == "2") {
+                    currentBuild.result = 'FAILURE'
+                    error("Stopping pipeline due to critical vulnerabilities")
+                } else if (lastCode == "1") {
+                    currentBuild.result = 'UNSTABLE'
+                }
+            }
+        }
     }
 }
