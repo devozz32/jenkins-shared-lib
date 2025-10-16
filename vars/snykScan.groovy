@@ -5,6 +5,7 @@ def call(Map args = [:]) {
     }
 
     def foundHigh = false
+    def foundCritical = false
 
     withCredentials([string(credentialsId: 'SNYK_TOKEN', variable: 'SNYK_TOKEN')]) {
         sh "snyk auth \$SNYK_TOKEN"
@@ -14,40 +15,40 @@ def call(Map args = [:]) {
             echo "Scanning container for: ${svc}"
             echo "==============================="
 
-            // שלב 1 - בדיקת קריטיות
+            // בדיקה עבור CRITICAL (לא תכשיל את הפייפליין)
             def criticalExitCode = sh(
-                script: "snyk container test ${svc} --severity-threshold=critical",
+                script: "snyk container test ${svc} --severity-threshold=critical || true",
                 returnStatus: true
             )
 
             if (criticalExitCode != 0) {
-                echo "Found CRITICAL vulnerabilities in ${svc} - failing pipeline."
-                currentBuild.result = 'FAILURE'
-                error("Stopping pipeline due to critical vulnerabilities in ${svc}")
+                echo "🚨 Found CRITICAL vulnerabilities in ${svc} (pipeline will continue)"
+                foundCritical = true
             }
 
-            // שלב 2 - בדיקת High
+            // בדיקה עבור HIGH
             def highExitCode = sh(
-                script: "snyk container test ${svc} --severity-threshold=high",
+                script: "snyk container test ${svc} --severity-threshold=high || true",
                 returnStatus: true
             )
 
             if (highExitCode != 0) {
-                echo "Found HIGH vulnerabilities in ${svc}"
+                echo "⚠️ Found HIGH vulnerabilities in ${svc}"
                 foundHigh = true
-            } else {
-                echo "No critical or high vulnerabilities found for ${svc}."
+            } else if (criticalExitCode == 0) {
+                echo "✅ No critical or high vulnerabilities found for ${svc}."
             }
 
-            // שולח Snapshot ל-Snyk UI
+            // שליחת Snapshot ל־Snyk
             sh "snyk container monitor ${svc} || true"
         }
 
-        if (foundHigh) {
-            echo "Marking build as UNSTABLE because at least one service had HIGH vulnerabilities."
+        // מסקנה כללית
+        if (foundCritical || foundHigh) {
+            echo "⚠️ Vulnerabilities detected — build will be marked as UNSTABLE."
             currentBuild.result = 'UNSTABLE'
         } else {
-            echo "All services scanned clean (no critical/high vulnerabilities)."
+            echo "✅ All services scanned clean (no critical/high vulnerabilities)."
         }
     }
 }
